@@ -912,6 +912,9 @@ func setupAzureKeyVaultURL(ctx context.Context) error {
 	}
 
 	managedIdentity, err := getAzureManagedIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting managed identity: %v", err)
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", *flAzureKeyVaultURL, nil)
 	if err != nil {
@@ -925,7 +928,7 @@ func setupAzureKeyVaultURL(ctx context.Context) error {
 		return fmt.Errorf("error access auth url: %v", err)
 	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("access auth url: %v", err)
+		return fmt.Errorf("non 200 status code: %v", resp.StatusCode)
 	}
 	authData, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -965,7 +968,7 @@ func getAzureManagedIdentity(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error access managed identity url: %v", err)
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("access managed identity url: %v", err)
+		return "", fmt.Errorf("non 200 status code: %v", resp.StatusCode)
 	}
 	authData, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
