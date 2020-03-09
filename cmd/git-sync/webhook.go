@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// WebHook structure
+// Webhook structure
 type Webhook struct {
 	// URL for the http/s request
 	URL string
@@ -32,6 +32,7 @@ type webhookData struct {
 	hash  string
 }
 
+// NewWebhookData ...
 func NewWebhookData() *webhookData {
 	return &webhookData{
 		ch: make(chan struct{}, 1),

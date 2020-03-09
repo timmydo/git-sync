@@ -104,6 +104,12 @@ var flCookieFile = flag.Bool("cookie-file", envBool("GIT_COOKIE_FILE", false),
 var flAskPassURL = flag.String("askpass-url", envString("GIT_ASKPASS_URL", ""),
 	"the URL for GIT_ASKPASS callback")
 
+var flManagedIdentityURL = flag.String("managed-identity-url", envString("GIT_MANAGED_IDENTITY_URL", "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net"),
+	"the URL for getting credentials from Azure KeyVault")
+
+var flAzureKeyVaultURL = flag.String("keyvault-url", envString("GIT_AZURE_KEYVAULT_URL", ""),
+	"the URL for getting credentials from Azure KeyVault")
+
 var flGitCmd = flag.String("git", envString("GIT_SYNC_GIT", "git"),
 	"the git command to run (subject to PATH search, mostly for testing)")
 
@@ -239,8 +245,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if (*flUsername != "" || *flPassword != "" || *flCookieFile || *flAskPassURL != "") && *flSSH {
-		fmt.Fprintf(os.Stderr, "ERROR: --ssh is set but --username, --password, --askpass-url, or --cookie-file were provided\n")
+	if (*flUsername != "" || *flPassword != "" || *flCookieFile || *flAskPassURL != "" || *flAzureKeyVaultURL != "") && *flSSH {
+		fmt.Fprintf(os.Stderr, "ERROR: --ssh is set but --username, --password, --askpass-url, --keyvault-url, or --cookie-file were provided\n")
 		os.Exit(1)
 	}
 
@@ -279,6 +285,17 @@ func main() {
 	if *flAskPassURL != "" {
 		if err := setupGitAskPassURL(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: failed to call ASKPASS callback URL: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if *flAzureKeyVaultURL != "" {
+		if *flUsername == "" {
+			fmt.Fprintf(os.Stderr, "ERROR: --keyvault-url is set but --username was not provided\n")
+			os.Exit(1)
+		}
+		if err := setupAzureKeyVaultURL(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: failed to call Azure KeyVault: %v\n", err)
 			os.Exit(1)
 		}
 	}
@@ -638,8 +655,8 @@ func revIsHash(ctx context.Context, rev, gitRoot string) (bool, error) {
 
 // syncRepo syncs the branch of a given repository to the destination at the given rev.
 // returns (1) whether a change occured, (2) the new hash, and (3) an error if one happened
-func syncRepo(ctx context.Context, repo, branch, rev string, depth int, gitRoot, dest string, authUrl string) (bool, string, error) {
-	if authUrl != "" {
+func syncRepo(ctx context.Context, repo, branch, rev string, depth int, gitRoot, dest string, authURL string) (bool, string, error) {
+	if authURL != "" {
 		// For ASKPASS Callback URL, the credentials behind is dynamic, it needs to be
 		// re-fetched each time.
 		if err := setupGitAskPassURL(ctx); err != nil {
@@ -882,4 +899,79 @@ func setupGitAskPassURL(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func setupAzureKeyVaultURL(ctx context.Context) error {
+	log.V(1).Info("configuring Azure KeyVault")
+
+	var netClient = &http.Client{
+		Timeout: time.Second * 5,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	managedIdentity, err := getAzureManagedIdentity(ctx)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", *flAzureKeyVaultURL, nil)
+	if err != nil {
+		return fmt.Errorf("error create auth request: %v", err)
+	}
+
+	httpReq.Header.Set("Authorization", "Bearer "+managedIdentity)
+
+	resp, err := netClient.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("error access auth url: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("access auth url: %v", err)
+	}
+	authData, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("error read auth response: %v", err)
+	}
+
+	username := *flUsername
+	password := string(authData)
+
+	if err := setupGitAuth(ctx, username, password, *flRepo); err != nil {
+		return fmt.Errorf("error setup git auth: %v", err)
+	}
+
+	return nil
+}
+
+func getAzureManagedIdentity(ctx context.Context) (string, error) {
+	log.V(1).Info("Requesting managed identity")
+	var netClient = &http.Client{
+		Timeout: time.Second * 5,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", *flManagedIdentityURL, nil)
+
+	if err != nil {
+		return "", fmt.Errorf("error create managed identity request: %v", err)
+	}
+
+	httpReq.Header.Set("Metadata", "true")
+
+	resp, err := netClient.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("error access managed identity url: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("access managed identity url: %v", err)
+	}
+	authData, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return "", fmt.Errorf("error read managed identity response: %v", err)
+	}
+
+	return string(authData), nil
 }
