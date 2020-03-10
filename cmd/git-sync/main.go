@@ -21,6 +21,7 @@ package main // import "k8s.io/git-sync/cmd/git-sync"
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -946,6 +947,16 @@ func setupAzureKeyVaultURL(ctx context.Context) error {
 	return nil
 }
 
+type responseJson struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    string `json:"expires_in"`
+	ExpiresOn    string `json:"expires_on"`
+	NotBefore    string `json:"not_before"`
+	Resource     string `json:"resource"`
+	TokenType    string `json:"token_type"`
+}
+
 func getAzureManagedIdentity(ctx context.Context) (string, error) {
 	log.V(1).Info("Requesting managed identity")
 	var netClient = &http.Client{
@@ -976,5 +987,11 @@ func getAzureManagedIdentity(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error read managed identity response: %v", err)
 	}
 
-	return string(authData), nil
+	var r responseJson
+	err = json.Unmarshal(authData, &r)
+	if err != nil {
+		return "", fmt.Errorf("Error calling json.Unmarshal on the response: %v", err)
+	}
+
+	return r.AccessToken, nil
 }
