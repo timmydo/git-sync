@@ -938,7 +938,7 @@ func setupAzureKeyVaultURL(ctx context.Context) error {
 	}
 
 	username := *flUsername
-	password := string(authData)
+	password := strings.TrimSpace(string(authData))
 
 	if err := setupGitAuth(ctx, username, password, *flRepo); err != nil {
 		return fmt.Errorf("error setup git auth: %v", err)
