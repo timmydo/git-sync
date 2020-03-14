@@ -909,6 +909,10 @@ func setupGitAskPassURL(ctx context.Context) error {
 	return nil
 }
 
+type secretResponse struct {
+	Value string `json:"value"`
+}
+
 func setupAzureKeyVaultURL(ctx context.Context) (string, error) {
 	log.V(1).Info("configuring Azure KeyVault")
 
@@ -944,13 +948,19 @@ func setupAzureKeyVaultURL(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error read auth response: %v", err)
 	}
 
+	var r secretResponse
+	err = json.Unmarshal(authData, &r)
+	if err != nil {
+		return "", fmt.Errorf("Error calling json.Unmarshal on the response: %v", err)
+	}
+
 	username := *flUsername
-	password := strings.TrimSpace(string(authData))
+	password := r.Value
 
 	return username + ":" + password, nil
 }
 
-type responseJson struct {
+type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    string `json:"expires_in"`
@@ -990,7 +1000,7 @@ func getAzureManagedIdentity(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error read managed identity response: %v", err)
 	}
 
-	var r responseJson
+	var r tokenResponse
 	err = json.Unmarshal(authData, &r)
 	if err != nil {
 		return "", fmt.Errorf("Error calling json.Unmarshal on the response: %v", err)
