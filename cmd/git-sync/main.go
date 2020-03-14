@@ -290,15 +290,22 @@ func main() {
 		}
 	}
 
+	repoUrl := *flRepo
+
 	if *flAzureKeyVaultURL != "" {
 		if *flUsername == "" {
 			fmt.Fprintf(os.Stderr, "ERROR: --keyvault-url is set but --username was not provided\n")
 			os.Exit(1)
 		}
-		if err := setupAzureKeyVaultURL(ctx); err != nil {
+		auth, err := setupAzureKeyVaultURL(ctx)
+
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: failed to call Azure KeyVault: %v\n", err)
 			os.Exit(1)
 		}
+
+		splits := strings.SplitN(repoUrl, "//", 2)
+		repoUrl = splits[0] + "//" + auth + "@" + splits[1]
 	}
 
 	// The scope of the initialization context ends here, so we call cancel to release resources associated with it.
@@ -358,7 +365,7 @@ func main() {
 	for {
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(*flSyncTimeout))
-		if changed, hash, err := syncRepo(ctx, *flRepo, *flBranch, *flRev, *flDepth, *flRoot, *flDest, *flAskPassURL); err != nil {
+		if changed, hash, err := syncRepo(ctx, repoUrl, *flBranch, *flRev, *flDepth, *flRoot, *flDest, *flAskPassURL); err != nil {
 			syncDuration.WithLabelValues("error").Observe(time.Since(start).Seconds())
 			syncCount.WithLabelValues("error").Inc()
 			if *flMaxSyncFailures != -1 && failCount >= *flMaxSyncFailures {
@@ -902,7 +909,7 @@ func setupGitAskPassURL(ctx context.Context) error {
 	return nil
 }
 
-func setupAzureKeyVaultURL(ctx context.Context) error {
+func setupAzureKeyVaultURL(ctx context.Context) (string, error) {
 	log.V(1).Info("configuring Azure KeyVault")
 
 	var netClient = &http.Client{
@@ -914,37 +921,33 @@ func setupAzureKeyVaultURL(ctx context.Context) error {
 
 	managedIdentity, err := getAzureManagedIdentity(ctx)
 	if err != nil {
-		return fmt.Errorf("error getting managed identity: %v", err)
+		return "", fmt.Errorf("error getting managed identity: %v", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "GET", *flAzureKeyVaultURL, nil)
 	if err != nil {
-		return fmt.Errorf("error create auth request: %v", err)
+		return "", fmt.Errorf("error create auth request: %v", err)
 	}
 
 	httpReq.Header.Set("Authorization", "Bearer "+managedIdentity)
 
 	resp, err := netClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("error access auth url: %v", err)
+		return "", fmt.Errorf("error access auth url: %v", err)
 	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("non 200 status code: %v", resp.StatusCode)
+		return "", fmt.Errorf("non 200 status code: %v", resp.StatusCode)
 	}
 	authData, err := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		return fmt.Errorf("error read auth response: %v", err)
+		return "", fmt.Errorf("error read auth response: %v", err)
 	}
 
 	username := *flUsername
 	password := strings.TrimSpace(string(authData))
 
-	if err := setupGitAuth(ctx, username, password, *flRepo); err != nil {
-		return fmt.Errorf("error setup git auth: %v", err)
-	}
-
-	return nil
+	return username + ":" + password, nil
 }
 
 type responseJson struct {
